@@ -50,16 +50,19 @@ if `verifyClient` is provided with two arguments then those are:
     reason phrase.
 
 
-If `handleProtocols` is not set then the handshake is automatically accepted,
-otherwise the function takes two arguments:
+`handleProtocols` takes two arguments:
 
 - `protocols` {Array} The list of WebSocket subprotocols indicated by the
   client in the `Sec-WebSocket-Protocol` header.
 - `request` {http.IncomingMessage} The client HTTP GET request.
 
-If returned value is `false` then the handshake is rejected with the HTTP 401
-status code, otherwise the returned value sets the value of the
-`Sec-WebSocket-Protocol` header in the HTTP 101 response.
+The returned value sets the value of the `Sec-WebSocket-Protocol` header in the
+HTTP 101 response. If returned value is `false` the header is not added in the
+response.
+
+If `handleProtocols` is not set then the first of the client's requested
+subprotocols is used.
+
 
 `perMessageDeflate` can be used to control the behavior of
 [permessage-deflate extension][permessage-deflate].
@@ -71,8 +74,10 @@ provided then that is extension parameters:
   takeover.
 - `serverMaxWindowBits` {Number} The value of `windowBits`.
 - `clientMaxWindowBits` {Number} Request a custom client window size.
-- `level` {Number} The value of zlib's `level` param (0-9, default 8).
-- `memLevel` {Number} The value of zlib's `memLevel` param (1-9, default 8).
+- `zlibDeflateOptions` {Object} [Additional options][zlib-options] to pass to
+  zlib on deflate.
+- `zlibInflateOptions` {Object} [Additional options][zlib-options] to pass to
+  zlib on inflate.
 - `threshold` {Number} Payloads smaller than this will not be compressed.
   Defaults to 1024 bytes.
 - `concurrencyLimit` {Number} The number of concurrent calls to zlib.
@@ -124,9 +129,19 @@ Emitted when the underlying server has been bound.
 A set that stores all connected clients. Please note that this property is only
 added when the `clientTracking` is truthy.
 
+### server.address()
+
+Returns an object with `port`, `family`, and `address` properties specifying
+the bound address, the address family name, and port of the server as reported
+by the operating system if listening on an IP socket.
+If the server is listening on a pipe or UNIX domain socket, the name is
+returned as a string.
+
 ### server.close([callback])
 
-Close the server and terminate all clients, calls callback when done.
+Close the HTTP server if created internally, terminate all clients and call
+callback when done. If an external HTTP server is used via the `server` or
+`noServer` constructor options, it must be closed manually.
 
 ### server.handleUpgrade(request, socket, head, callback)
 
@@ -170,31 +185,15 @@ This class represents a WebSocket. It extends the `EventEmitter`.
 
 ### new WebSocket(address[, protocols][, options])
 
-- `address` {String} The URL to which to connect.
+- `address` {String|url.Url|url.URL} The URL to which to connect.
 - `protocols` {String|Array} The list of subprotocols.
 - `options` {Object}
-  - `protocol` {String} Value of the `Sec-WebSocket-Protocol` header.
   - `handshakeTimeout` {Number} Timeout in milliseconds for the handshake request.
   - `perMessageDeflate` {Boolean|Object} Enable/disable permessage-deflate.
-  - `localAddress` {String} Local interface to bind for network connections.
   - `protocolVersion` {Number} Value of the `Sec-WebSocket-Version` header.
-  - `headers` {Object} An object with custom headers to send along with the
-    request.
   - `origin` {String} Value of the `Origin` or `Sec-WebSocket-Origin` header
     depending on the `protocolVersion`.
-  - `agent` {http.Agent|https.Agent} Use the specified Agent.
-  - `host` {String} Value of the `Host` header.
-  - `family` {Number} IP address family to use during hostname lookup (4 or 6).
-  - `checkServerIdentity` {Function} A function to validate the server hostname.
-  - `rejectUnauthorized` {Boolean} Verify or not the server certificate.
-  - `passphrase` {String} The passphrase for the private key or pfx.
-  - `ecdhCurve` {String} A named curve or a colon separated list of curve NIDs
-    or names to use for ECDH key agreement.
-  - `ciphers` {String} The ciphers to use or exclude
-  - `cert` {String|Array|Buffer} The certificate key.
-  - `key` {String|Array|Buffer} The private key.
-  - `pfx` {String|Buffer} The private key, certificate, and CA certs.
-  - `ca` {Array} Trusted certificates.
+  - Any other option allowed in [http.request()][] or [https.request()][].
 
 `perMessageDeflate` default value is `true`. When using an object, parameters
 are the same of the server. The only difference is the direction of requests.
@@ -234,17 +233,7 @@ human-readable string explaining why the connection has been closed.
 
 - `error` {Error}
 
-Emitted when an error occurs. Errors from the underlying `net.Socket` are
-forwarded here.
-
-### Event: 'headers'
-
-- `headers` {Object}
-- `response` {http.IncomingMessage}
-
-Emitted when response headers are received from the server as part of the
-handshake.  This allows you to read headers from the server, for example
-'set-cookie' headers.
+Emitted when an error occurs.
 
 ### Event: 'message'
 
@@ -278,6 +267,14 @@ response. This event gives the ability to read the response in order to extract
 useful information. If the server sends an invalid response and there isn't a
 listener for this event, an error is emitted.
 
+### Event: 'upgrade'
+
+- `response` {http.IncomingMessage}
+
+Emitted when response headers are received from the server as part of the
+handshake.  This allows you to read headers from the server, for example
+'set-cookie' headers.
+
 ### websocket.addEventListener(type, listener)
 
 - `type` {String} A string representing the event type to listen for.
@@ -302,13 +299,7 @@ of binary protocols transferring large messages with multiple fragments.
 The number of bytes of data that have been queued using calls to `send()` but
 not yet transmitted to the network.
 
-### websocket.bytesReceived
-
-- {Number}
-
-Received bytes count.
-
-### websocket.close([code][, reason])
+### websocket.close([code[, reason]])
 
 - `code` {Number} A numeric value indicating the status code explaining why
   the connection is being closed.
@@ -335,7 +326,7 @@ a `CloseEvent` named "close".
 - {Function}
 
 An event listener to be called when an error occurs. The listener receives
-an `Error` instance.
+an `ErrorEvent` named "error".
 
 ### websocket.onmessage
 
@@ -351,27 +342,23 @@ listener receives a `MessageEvent` named "message".
 An event listener to be called when the connection is established. The listener
 receives an `OpenEvent` named "open".
 
-### websocket.pause()
-
-Pause the socket.
-
-### websocket.ping([data[, mask[, failSilently]]])
+### websocket.ping([data[, mask]][, callback])
 
 - `data` {Any} The data to send in the ping frame.
 - `mask` {Boolean} Specifies whether `data` should be masked or not. Defaults
   to `true` when `websocket` is not a server client.
-- `failSilently` {Boolean} Specifies whether or not to throw an error if the
-  connection is not open.
+- `callback` {Function} An optional callback which is invoked when the ping
+  frame is written out.
 
 Send a ping.
 
-### websocket.pong([data[, mask[, failSilently]]])
+### websocket.pong([data[, mask]][, callback])
 
 - `data` {Any} The data to send in the pong frame.
 - `mask` {Boolean} Specifies whether `data` should be masked or not. Defaults
   to `true` when `websocket` is not a server client.
-- `failSilently` {Boolean} Specifies whether or not to throw an error if the
-  connection is not open.
+- `callback` {Function} An optional callback which is invoked when the pong
+  frame is written out.
 
 Send a pong.
 
@@ -380,12 +367,6 @@ Send a pong.
 - {String}
 
 The subprotocol selected by the server.
-
-### websocket.protocolVersion
-
-- {Number}
-
-The WebSocket protocol version used for this connection, 8 or 13.
 
 ### websocket.readyState
 
@@ -400,11 +381,7 @@ The current state of the connection. This is one of the ready state constants.
 
 Removes an event listener emulating the `EventTarget` interface.
 
-### websocket.resume()
-
-Resume the socket.
-
-### websocket.send(data, [options][, callback])
+### websocket.send(data[, options][, callback])
 
 - `data` {Any} The data to send.
 - `options` {Object}
@@ -433,3 +410,6 @@ The URL of the WebSocket server. Server clients don't have this attribute.
 
 [concurrency-limit]: https://github.com/websockets/ws/issues/1202
 [permessage-deflate]: https://tools.ietf.org/html/draft-ietf-hybi-permessage-compression-19
+[zlib-options]: https://nodejs.org/api/zlib.html#zlib_class_options
+[http.request()]: https://nodejs.org/api/http.html#http_http_request_options_callback
+[https.request()]: https://nodejs.org/api/https.html#https_https_request_options_callback

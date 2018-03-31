@@ -1,11 +1,9 @@
 'use strict';
 
-const safeBuffer = require('safe-buffer');
 const cluster = require('cluster');
 
 const WebSocket = require('..');
 
-const Buffer = safeBuffer.Buffer;
 const port = 8181;
 
 if (cluster.isMaster) {
@@ -40,6 +38,7 @@ if (cluster.isMaster) {
   };
 
   const humanSize = (bytes) => {
+    if (bytes >= 1073741824) return roundPrec(bytes / 1073741824, 2) + ' GiB';
     if (bytes >= 1048576) return roundPrec(bytes / 1048576, 2) + ' MiB';
     if (bytes >= 1024) return roundPrec(bytes / 1024, 2) + ' KiB';
     return roundPrec(bytes, 2) + ' B';
@@ -61,7 +60,7 @@ if (cluster.isMaster) {
 
     ws.on('error', (err) => {
       console.error(err.stack);
-      cluster.worker.kill();
+      cluster.worker.disconnect();
     });
     ws.on('open', () => {
       time = process.hrtime();
@@ -79,7 +78,7 @@ if (cluster.isMaster) {
         humanSize(size),
         useBinary ? 'binary' : 'text',
         roundPrec(elapsed / 1e9, 1),
-        humanSize(size * roundtrips / elapsed * 1e9) + '/s'
+        humanSize(size * 2 * roundtrips / elapsed * 1e9) + '/s'
       );
 
       ws.close();
@@ -88,7 +87,7 @@ if (cluster.isMaster) {
   };
 
   (function run () {
-    if (configs.length === 0) return cluster.worker.kill();
+    if (configs.length === 0) return cluster.worker.disconnect();
     var config = configs.shift();
     config.push(run);
     runConfig.apply(null, config);
